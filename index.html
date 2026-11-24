@@ -261,6 +261,9 @@
       #reviveBtn{flex:1.2;margin-top:16px;border:1px solid #ba976b;background:#474039;color:#ffe5b4;border-radius:7px;font-weight:bold;cursor:pointer}
       #launchActions #startBtn{flex:1}
       @media(pointer:coarse){#reviveBtn{margin-top:7px}}
+      #setupLabels{grid-area:label;display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:8px;color:#d7c1b2;font-size:12px}
+      #setupLabels #mapLabel{margin:0}
+      #steeringPicker{padding:4px;background:#282331;color:#f4e5d4;border:1px solid #877361;border-radius:4px;font:inherit}
     </style>
   </head>
   <body>
@@ -336,7 +339,10 @@
           <div aria-live="polite"><small id="planeIndex"></small><strong id="planeName"></strong><span id="planeType"></span></div>
           <button id="nextPlane" type="button" aria-label="下一架飞机">›</button>
         </div>
-        <label id="mapLabel" for="mapPicker">选择地图</label>
+        <div id="setupLabels">
+          <label id="mapLabel" for="mapPicker">选择地图</label>
+          <label for="steeringPicker">控制器 <select id="steeringPicker"><option value="normal">正向（默认）</option><option value="reverse">左右反向</option></select></label>
+        </div>
         <select id="mapPicker"></select>
         <p id="mapLine"></p>
         <div id="launchActions"><button id="reviveBtn" type="button" hidden>本关复活</button><button id="startBtn" type="button">开始飞行</button></div>
@@ -2695,6 +2701,14 @@
 
     /* ================= input ================= */
     var keys = {};
+    var steeringPicker=document.getElementById('steeringPicker');
+    try{if(localStorage.getItem('dusk.steering')==='reverse')steeringPicker.value='reverse';}catch{}
+    // The jet faces local +Z. Positive yaw turns toward screen left.
+    function steeringSign(){return steeringPicker.value==='reverse'?1:-1;}
+    steeringPicker.addEventListener('change',function(){
+      mouse.active=false;
+      try{localStorage.setItem('dusk.steering',steeringPicker.value);}catch{}
+    });
     var mouse = { nx: 0, ny: 0, active: false };
     var joy = { x: 0, y: 0, id: null };
     var touchBurner = false;
@@ -2703,19 +2717,19 @@
         if(/^Digit[123]$/.test(e.code) && !e.repeat){e.preventDefault();choices.children[Number(e.code.slice(-1))-1]?.click();}
         return;
       }
-      if(e.target.id==='mapPicker' && state!=='play') return;
+      if(e.target.matches?.('select') && state!=='play') return;
       keys[e.code] = true;
       if (e.code === 'Space'){ e.preventDefault(); if (state === 'play') fireMissile(); }
       if (e.code === 'KeyC' && state === 'play') toggleCam();
-      if (e.code === 'KeyQ' && state === 'play') triggerRoll(1);
-      if (e.code === 'KeyE' && state === 'play') triggerRoll(-1);
+      if (e.code === 'KeyQ' && state === 'play') triggerRoll(steeringSign());
+      if (e.code === 'KeyE' && state === 'play') triggerRoll(-steeringSign());
       if(e.code==='KeyM' && !e.repeat && state==='play'){e.preventDefault();toggleRadar();}
       if (e.code === 'KeyP'){ if (state === 'play') pauseGame(); else if (state === 'pause') resumeGame(); }
       if (e.code === 'Enter' && !e.target.closest?.('button,select') && (state === 'menu' || state === 'crash' || state === 'done')) startGame();
     });
     window.addEventListener('keyup', function(e){ keys[e.code] = false; });
     window.addEventListener('pointermove', function(e){
-      if (e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse' || state!=='play' || joy.id!==null || e.sourceCapabilities?.firesTouchEvents) return;
       mouse.nx = clamp((e.clientX / playWidth()) * 2 - 1, -1, 1);
       mouse.ny = clamp((e.clientY / playHeight()) * 2 - 1, -1, 1);
       mouse.active = true;
@@ -2739,7 +2753,7 @@
     var stickContacts=new Map();
     stickEl.addEventListener('pointerdown',function(e){
       if(state!=='play')return;
-      stickContacts.set(e.pointerId,e);
+      mouse.active=false;stickContacts.set(e.pointerId,e);
       stickEl.setPointerCapture(e.pointerId);e.preventDefault();
       if(joy.id===null){joy.id=e.pointerId;stickSet(e);}
     });
@@ -2783,7 +2797,7 @@
     }
     bindFlightButton('btnBurn',()=>touchBurner=true,()=>touchBurner=false);
     bindFlightButton('btnFire',()=>{touchFire=true;fireMissile();},()=>touchFire=false);
-    bindFlightButton('btnRoll',()=>triggerRoll(joy.x<-.2?1:-1));
+    bindFlightButton('btnRoll',()=>triggerRoll((joy.x<-.2?1:-1)*steeringSign()));
     bindFlightButton('btnCam',toggleCam);
     function resetTouches(){
       stickContacts.clear();centerStick();for(var reset of buttonResets)reset();
@@ -3267,10 +3281,10 @@
     function moveFoe(d,dt){
       var p=d.g.position,f=foes[d.kind];enemyDelta.copy(P.pos).sub(p);
       var dist=Math.max(1,enemyDelta.length());enemyDelta.divideScalar(dist);
-      var travel=(f.speed+Math.min(42,wave*2))*dt;
+      var travel=(f.speed+Math.min(42,wave*2))*.84*dt;
       var stride=clamp((dist-f.range)/90,-.55,1)*travel;
       p.addScaledVector(enemyDelta,stride);
-      var side=Math.sin(elapsed*(d.kind===1?1.55:.60)+d.phase)*(d.kind===1?1:.36)*travel;
+      var side=Math.sin(elapsed*(d.kind===1?1.55:.60)+d.phase)*(d.kind===1?.78:.36)*travel;
       p.x+=enemyDelta.z*side;p.z-=enemyDelta.x*side;
       p.y=Math.max(surfaceY(p.x,p.z)+28,MAP.sea+28,p.y+Math.sin(elapsed+d.phase)*dt*3);
       if(dist>1100){p.copy(P.pos).addScaledVector(fwdVec,450);p.x+=60*Math.sin(d.phase);p.y=Math.max(p.y+35,surfaceY(p.x,p.z)+45,MAP.sea+45);d.shot=2.4;}
@@ -3435,18 +3449,24 @@
       if (keys['KeyS'] || keys['ArrowDown']) pitchIn -= 1;
       if (keys['KeyA'] || keys['ArrowLeft']) rollIn -= 1;
       if (keys['KeyD'] || keys['ArrowRight']) rollIn += 1;
-      if (mouse.active){ pitchIn += -mouse.ny * 0.9; rollIn += mouse.nx * 0.9; }
+      if (mouse.active && joy.id===null){
+        if(!pitchIn)pitchIn=-mouse.ny*.9;
+        if(!rollIn)rollIn=mouse.nx*.9;
+      }
       pitchIn += -joy.y; rollIn += joy.x;
-      pitchIn = clamp(pitchIn, -1, 1); rollIn = clamp(rollIn, -1, 1);
+      pitchIn = clamp(pitchIn, -1, 1); rollIn = steeringSign()*clamp(rollIn, -1, 1);
       P.burner = !!(keys['ShiftLeft'] || keys['ShiftRight'] || touchBurner);
 
       /* --- flight model --- */
       P.pitch = clamp(P.pitch + pitchIn * 0.85 * dt, -1.12, 1.12);
       if (Math.abs(pitchIn) < 0.04) P.pitch *= Math.max(0, 1 - 0.25 * dt);
-      var bankTarget = rollIn * 1.18;
-      P.bank += (bankTarget - P.bank) * Math.min(1, dt * (rollIn !== 0 ? 4.2 : 2.4));
+      var maxBank = 1.18;
+      var bankTarget = rollIn * maxBank;
+      P.bank += (bankTarget - P.bank) * Math.min(1, dt * (rollIn !== 0 ? 5.4 : 4.0));
       var spdFactor = clamp(P.speed / 72, 0.55, 1.5);
-      P.yaw += P.bank * 0.52 * spdFactor * dt;
+      var bankFraction = P.bank / maxBank;
+      var turnRate = 0.52 + 0.18 * bankFraction * bankFraction;
+      P.yaw += P.bank * turnRate * spdFactor * dt;
       var targetSpeed = (P.burner ? 156 : 64) - Math.sin(P.pitch) * 34;
       var rate = P.burner ? 30 : 17;
       P.speed += clamp(targetSpeed - P.speed, -rate * dt, rate * dt);
@@ -3559,9 +3579,9 @@
         else{
         if (d.g.position.distanceTo(P.pos) > 3900 && state === 'play') placeDrone(d, P.pos);
         d.g.position.set(
-          d.anchor.x + Math.sin(elapsed * 0.24 + d.phase) * 26,
-          d.anchor.y + Math.sin(elapsed * 1.25 + d.phase) * 3.2,
-          d.anchor.z + Math.cos(elapsed * 0.19 + d.phase) * 26
+          d.anchor.x + Math.sin(elapsed * 0.20 + d.phase) * 26,
+          d.anchor.y + Math.sin(elapsed * 1.05 + d.phase) * 3.2,
+          d.anchor.z + Math.cos(elapsed * 0.16 + d.phase) * 26
         );
         if(state==='play' && race.cd<=0)enemyAttack(d,d.g.position.distanceTo(P.pos),dt);
         }
